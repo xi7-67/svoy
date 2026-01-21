@@ -372,69 +372,6 @@ impl ImageViewer {
     }
 }
 
-// Icon Painting Helpers
-fn paint_pencil_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32, is_active: bool) {
-    let p = ui.painter();
-    let center = rect.center();
-    let size = rect.width() * 0.6;
-    let stroke = egui::Stroke::new(2.0, color);
-    
-    // Pencil body (angled rectangle)
-    // Tip at bottom-left, Eraser at top-right
-    let tip = center + egui::vec2(-size * 0.4, size * 0.4);
-    let end = center + egui::vec2(size * 0.4, -size * 0.4);
-    
-    // Draw body
-    let mut points = vec![
-        tip,
-        tip + egui::vec2(size * 0.2, 0.0),
-        end + egui::vec2(0.0, size * 0.2), // Top-right corner 1
-        end + egui::vec2(-size * 0.2, 0.0), // Bottom-left corner of top
-    ];
-    
-    if is_active {
-         // Fill if active
-         p.add(egui::Shape::convex_polygon(points.clone(), color, egui::Stroke::NONE));
-    } else {
-         // Outline if not
-         points.push(points[0]); // Close loop
-         p.add(egui::Shape::line(points, stroke));
-    }
-}
-
-fn paint_rotate_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {
-    let p = ui.painter();
-    let center = rect.center();
-    let radius = rect.width() * 0.25;
-    let stroke = egui::Stroke::new(2.0, color);
-    
-    // Circle arc (approximated by circle for now as egui arc is tricky in older versions without epaint::Shape::Arc)
-    p.circle_stroke(center, radius, stroke);
-    
-    // Arrow head
-    let top = center + egui::vec2(0.0, -radius);
-    p.line_segment([top, top + egui::vec2(-4.0, 4.0)], stroke);
-    p.line_segment([top, top + egui::vec2(-4.0, -4.0)], stroke);
-}
-
-fn paint_convert_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) {
-    let p = ui.painter();
-    let center = rect.center();
-    let radius = rect.width() * 0.3;
-    let stroke = egui::Stroke::new(2.0, color);
-    
-    let offset = radius * 0.5;
-    let top_center = center + egui::vec2(0.0, -offset);
-    let bot_center = center + egui::vec2(0.0, offset);
-    
-    // Top arrow (Right)
-    p.line_segment([top_center + egui::vec2(-radius, 0.0), top_center + egui::vec2(radius, 0.0)], stroke);
-    p.line_segment([top_center + egui::vec2(radius, 0.0), top_center + egui::vec2(radius - 4.0, -4.0)], stroke);
-    
-    // Bottom arrow (Left)
-    p.line_segment([bot_center + egui::vec2(radius, 0.0), bot_center + egui::vec2(-radius, 0.0)], stroke);
-    p.line_segment([bot_center + egui::vec2(-radius, 0.0), bot_center + egui::vec2(-radius + 4.0, 4.0)], stroke);
-}
 
 impl eframe::App for ImageViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -642,24 +579,18 @@ impl eframe::App for ImageViewer {
 
                              ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                  // Right: Buttons
-                                 let btn_size = egui::vec2(30.0, 30.0);
+                                 let btn_size = egui::vec2(24.0, 24.0);
                                  let base_color = egui::Color32::WHITE.linear_multiply(self.top_bar_opacity);
                                  
                                  // Drawing Toggle
                                  let tooltip = if self.is_drawing_mode { "Stop Drawing" } else { "Toggle Drawing" };
-                                 let btn = egui::Button::new("").frame(false).min_size(btn_size);
-                                 let response = ui.add(btn).on_hover_text(tooltip);
-                                 let rect = response.rect;
-                                 
-                                 if response.hovered() {
-                                     ui.painter().rect_filled(rect.expand(2.0), 12.0, egui::Color32::WHITE.linear_multiply(0.1 * self.top_bar_opacity));
-                                 }
-                                 
-                                 if self.is_drawing_mode {
-                                      paint_pencil_icon(ui, rect, base_color, true);
+                                 let icon = if self.is_drawing_mode {
+                                     egui::include_image!("../materials/pencil-filled.svg")
                                  } else {
-                                      paint_pencil_icon(ui, rect, base_color, false);
-                                 }
+                                     egui::include_image!("../materials/pencil-unfilled.svg")
+                                 };
+                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
+                                 let response = ui.add(btn).on_hover_text(tooltip);
                                  
                                  if response.clicked() {
                                      self.is_drawing_mode = !self.is_drawing_mode;
@@ -668,14 +599,9 @@ impl eframe::App for ImageViewer {
                                  ui.separator();
 
                                  // Convert Button
-                                 let btn = egui::Button::new("").frame(false).min_size(btn_size);
+                                 let icon = egui::include_image!("../materials/convert.svg");
+                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
                                  let response = ui.add(btn).on_hover_text("Convert Image");
-                                 let rect = response.rect;
-                                 
-                                 if response.hovered() {
-                                     ui.painter().rect_filled(rect.expand(2.0), 12.0, egui::Color32::WHITE.linear_multiply(0.1 * self.top_bar_opacity));
-                                 }
-                                 paint_convert_icon(ui, rect, base_color);
                                  
                                  if response.clicked() {
                                      ui.ctx().memory_mut(|m| m.open_popup(egui::Id::new("convert_popup")));
@@ -694,26 +620,18 @@ impl eframe::App for ImageViewer {
                                  });
 
                                  // Rotate Button
-                                 let btn = egui::Button::new("").frame(false).min_size(btn_size);
+                                 let icon = egui::include_image!("../materials/rotate.png");
+                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
                                  let response = ui.add(btn).on_hover_text("Rotate 90°");
-                                 let rect = response.rect;
-                                 if response.hovered() {
-                                     ui.painter().rect_filled(rect.expand(2.0), 12.0, egui::Color32::WHITE.linear_multiply(0.1 * self.top_bar_opacity));
-                                 }
-                                 paint_rotate_icon(ui, rect, base_color);
                                  if response.clicked() {
                                      self.rotate_image(ctx);
                                  }
 
                                  // Info Button
-                                 let btn = egui::Button::new("").frame(false).min_size(btn_size);
+                                 let icon = egui::include_image!("../materials/info.svg");
+                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
                                  let response = ui.add(btn).on_hover_text("Image Info");
-                                 let rect = response.rect;
-                                 if response.hovered() {
-                                     ui.painter().rect_filled(rect.expand(2.0), 12.0, egui::Color32::WHITE.linear_multiply(0.1 * self.top_bar_opacity));
-                                 }
-                                 ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "ℹ", egui::FontId::proportional(20.0), base_color);
-
+                                 
                                  if response.clicked() {
                                      self.show_info_panel = !self.show_info_panel;
                                  }

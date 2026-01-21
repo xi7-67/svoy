@@ -1,1 +1,1 @@
-/home/xi/dev/svoy/target/release/svoy: /home/xi/dev/svoy/src/main.rs
+/home/xi/dev/svoy/target/release/svoy: /home/xi/dev/svoy/materials/convert.svg /home/xi/dev/svoy/materials/info.svg /home/xi/dev/svoy/materials/pencil-filled.svg /home/xi/dev/svoy/materials/pencil-unfilled.svg /home/xi/dev/svoy/materials/rotate.png /home/xi/dev/svoy/src/main.rs

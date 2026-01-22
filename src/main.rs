@@ -146,6 +146,10 @@ struct ImageViewer {
     // Metadata State
     metadata: Option<ImageMetadata>,
     show_info_panel: bool,
+    
+    // Navigation Arrow State
+    left_arrow_opacity: f32,
+    right_arrow_opacity: f32,
 }
 
 impl ImageViewer {
@@ -180,6 +184,8 @@ impl ImageViewer {
             text_entry_string: String::new(),
             metadata: None,
             show_info_panel: false,
+            left_arrow_opacity: 0.0,
+            right_arrow_opacity: 0.0,
         };
 
         if let Some(path) = initial_path {
@@ -460,278 +466,279 @@ impl eframe::App for ImageViewer {
             }
         }
 
-        // --- Top Bar Logic ---
+        // --- Overlay UI Logic ---
+        // Calculate all positions and hover states BEFORE rendering any Areas
+        // This prevents egui Areas from "stealing" hover state and causing flicker
+        
         let screen_rect = ctx.screen_rect();
-        let top_area_height = 60.0;
         let mouse_pos = ctx.input(|i| i.pointer.hover_pos());
-        let is_hovering_top = mouse_pos.map_or(false, |pos| pos.y <= top_area_height && screen_rect.contains(pos));
-
-        let anim_speed = 8.0 * dt;
-        if is_hovering_top || self.is_drawing_mode {
+        let anim_speed = 12.0 * dt; // Faster animation for smoother feel
+        
+        // Pre-calculate image rect for blur effects (used by all overlays)
+        let image_rect = self.texture.as_ref().map(|tex| {
+            let size = tex.size_vec2() * self.zoom;
+            egui::Rect::from_center_size(
+                (screen_rect.center().to_vec2() + self.offset).to_pos2(),
+                size
+            )
+        });
+        
+        // --- Top Bar Hover Logic ---
+        let top_bar_height = 40.0;
+        let top_area = if self.is_drawing_mode { 110.0 } else { top_bar_height };
+        
+        let hovering_top = mouse_pos.map_or(false, |p| p.y <= top_area && screen_rect.contains(p));
+        let should_show_top = hovering_top || self.is_drawing_mode || self.top_bar_opacity > 0.1;
+        
+        if hovering_top || self.is_drawing_mode {
             self.top_bar_opacity = (self.top_bar_opacity + anim_speed).min(1.0);
-            if self.top_bar_opacity < 1.0 { ctx.request_repaint(); }
         } else {
-            self.top_bar_opacity = (self.top_bar_opacity - anim_speed).max(0.0);
-             if self.top_bar_opacity > 0.0 { ctx.request_repaint(); }
+            self.top_bar_opacity = (self.top_bar_opacity - anim_speed * 0.5).max(0.0); // Slower fade out
         }
-
-        if self.top_bar_opacity > 0.0 {
-            let top_bar_bg_color = egui::Color32::from_black_alpha((180.0 * self.top_bar_opacity) as u8);
+        if self.top_bar_opacity > 0.0 && self.top_bar_opacity < 1.0 { ctx.request_repaint(); }
+        
+        // --- Arrow Hover Logic ---
+        let arrow_zone_width = 60.0;
+        
+        let hovering_left = mouse_pos.map_or(false, |p| {
+            p.x <= arrow_zone_width && p.y > top_area && screen_rect.contains(p)
+        });
+        let hovering_right = mouse_pos.map_or(false, |p| {
+            p.x >= screen_rect.width() - arrow_zone_width && p.y > top_area && screen_rect.contains(p)
+        });
+        
+        if hovering_left {
+            self.left_arrow_opacity = (self.left_arrow_opacity + anim_speed).min(1.0);
+        } else {
+            self.left_arrow_opacity = (self.left_arrow_opacity - anim_speed * 0.5).max(0.0);
+        }
+        
+        if hovering_right {
+            self.right_arrow_opacity = (self.right_arrow_opacity + anim_speed).min(1.0);
+        } else {
+            self.right_arrow_opacity = (self.right_arrow_opacity - anim_speed * 0.5).max(0.0);
+        }
+        
+        if (self.left_arrow_opacity > 0.0 && self.left_arrow_opacity < 1.0) ||
+           (self.right_arrow_opacity > 0.0 && self.right_arrow_opacity < 1.0) {
+            ctx.request_repaint();
+        }
+        
+        // Helper: paint gradient blur overlay
+        use egui::epaint::{Vertex, Mesh};
+        let paint_blur_gradient = |painter: &egui::Painter, rect: egui::Rect, opacity: f32, 
+                                   blur_tex: &egui::TextureHandle, img_rect: egui::Rect,
+                                   gradient_dir: &str| {
+            let intersect = rect.intersect(img_rect);
+            if !intersect.is_positive() { return; }
             
-            egui::Area::new(egui::Id::new("top_bar_overlay"))
-                .fixed_pos(egui::pos2(0.0, 0.0))
-                .anchor(egui::Align2::LEFT_TOP, egui::vec2(0.0, 0.0))
+            let uv_min = egui::pos2(
+                (intersect.min.x - img_rect.min.x) / img_rect.width(),
+                (intersect.min.y - img_rect.min.y) / img_rect.height(),
+            );
+            let uv_max = egui::pos2(
+                (intersect.max.x - img_rect.min.x) / img_rect.width(),
+                (intersect.max.y - img_rect.min.y) / img_rect.height(),
+            );
+            
+            let col_full = egui::Color32::WHITE.linear_multiply(opacity);
+            let col_fade = egui::Color32::TRANSPARENT;
+            
+            let mut mesh = Mesh::with_texture(blur_tex.id());
+            
+            // Build gradient mesh based on direction
+            let (tl, tr, br, bl) = match gradient_dir {
+                "down" => (col_full, col_full, col_fade, col_fade),
+                "left" => (col_fade, col_full, col_full, col_fade),
+                "right" => (col_full, col_fade, col_fade, col_full),
+                _ => (col_full, col_full, col_full, col_full),
+            };
+            
+            mesh.vertices.push(Vertex { pos: intersect.left_top(), uv: egui::pos2(uv_min.x, uv_min.y), color: tl });
+            mesh.vertices.push(Vertex { pos: intersect.right_top(), uv: egui::pos2(uv_max.x, uv_min.y), color: tr });
+            mesh.vertices.push(Vertex { pos: intersect.right_bottom(), uv: egui::pos2(uv_max.x, uv_max.y), color: br });
+            mesh.vertices.push(Vertex { pos: intersect.left_bottom(), uv: egui::pos2(uv_min.x, uv_max.y), color: bl });
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            
+            painter.add(mesh);
+        };
+        
+        // --- Render Top Bar ---
+        if self.top_bar_opacity > 0.0 {
+            let top_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(screen_rect.width(), top_bar_height));
+            
+            egui::Area::new(egui::Id::new("top_bar"))
+                .fixed_pos(egui::Pos2::ZERO)
                 .order(egui::Order::Foreground)
                 .interactable(true)
                 .show(ctx, |ui| {
-                    // Custom background painting for "shadowy" look
-                    let top_bar_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(screen_rect.width(), 40.0));
-                    
-                    // 1. Blur Effect (Glassmorphism)
-                    // We need to find where the image is relative to the top bar
-                    if let (Some(tex), Some(blur_tex)) = (&self.texture, &self.blurred_texture) {
-                        // Actually we need the same display logic here to know where the image is.
-                        // Ideally we'd store the calculated image_rect from the last frame or recalculate it centrally.
-                        // For now, let's re-calculate:
-                        let image_size = tex.size_vec2();
-                        let display_size = image_size * self.zoom;
-                        let screen_center = screen_rect.center().to_vec2() + self.offset;
-                        let image_rect = egui::Rect::from_center_size(screen_center.to_pos2(), display_size);
-
-                        // Find intersection
-                        let intersect = top_bar_rect.intersect(image_rect);
-                        if intersect.is_positive() {
-                            // Calculate UVs
-                            // Mapping: where is 'intersect' relative to 'image_rect' [0..1]
-                            let uv_min = egui::pos2(
-                                (intersect.min.x - image_rect.min.x) / image_rect.width(),
-                                (intersect.min.y - image_rect.min.y) / image_rect.height(),
-                            );
-                            let uv_max = egui::pos2(
-                                (intersect.max.x - image_rect.min.x) / image_rect.width(),
-                                (intersect.max.y - image_rect.min.y) / image_rect.height(),
-                            );
-                            
-                            // Gradient Mesh for Blur (Fade out at bottom)
-                            let mut blur_mesh = Mesh::with_texture(blur_tex.id());
-                            let b_col_top = egui::Color32::WHITE.linear_multiply(self.top_bar_opacity);
-                            let b_col_bot = egui::Color32::TRANSPARENT;
-                            
-                            blur_mesh.add_rect_with_uv(
-                                intersect, 
-                                egui::Rect::from_min_max(uv_min, uv_max), 
-                                b_col_top // default color, we will override vertices
-                            );
-                            
-                            // Override vertex colors for gradient
-                            // add_rect_with_uv adds 4 vertices: top-left, right-top, right-bottom, left-bottom (usually)
-                            // We need to check order or just force them. To be safe, let's construct manually.
-                            blur_mesh.vertices.clear();
-                            blur_mesh.indices.clear();
-                            let b_idx = 0;
-                            blur_mesh.vertices.push(Vertex { pos: intersect.left_top(), uv: egui::pos2(uv_min.x, uv_min.y), color: b_col_top });
-                            blur_mesh.vertices.push(Vertex { pos: intersect.right_top(), uv: egui::pos2(uv_max.x, uv_min.y), color: b_col_top });
-                            blur_mesh.vertices.push(Vertex { pos: intersect.right_bottom(), uv: egui::pos2(uv_max.x, uv_max.y), color: b_col_bot });
-                            blur_mesh.vertices.push(Vertex { pos: intersect.left_bottom(), uv: egui::pos2(uv_min.x, uv_max.y), color: b_col_bot });
-                            blur_mesh.add_triangle(b_idx, b_idx + 1, b_idx + 2);
-                            blur_mesh.add_triangle(b_idx, b_idx + 2, b_idx + 3);
-
-                            ui.painter().add(blur_mesh);
-                        }
+                    // Paint blur gradient (fades down)
+                    if let (Some(blur_tex), Some(img_rect)) = (&self.blurred_texture, image_rect) {
+                        paint_blur_gradient(ui.painter(), top_rect, self.top_bar_opacity, blur_tex, img_rect, "down");
                     }
-
-                    // 2. Gradient Mesh for Shadow
-                    use egui::epaint::{Vertex, Mesh};
-                    let mut mesh = Mesh::default();
-                    let col_top = egui::Color32::TRANSPARENT;
-                    let col_bot = egui::Color32::from_black_alpha(0);
                     
-                    
-                    // Manually constructing vertices for reliable vertical gradient if add_colored_rect doesn't support gradients in this version of egui
-                    mesh.vertices.clear();
-                    mesh.indices.clear();
-                    let idx = mesh.vertices.len() as u32;
-                    mesh.vertices.push(Vertex { pos: top_bar_rect.left_top(), uv: egui::Pos2::ZERO, color: col_top });
-                    mesh.vertices.push(Vertex { pos: top_bar_rect.right_top(), uv: egui::Pos2::ZERO, color: col_top });
-                    mesh.vertices.push(Vertex { pos: top_bar_rect.right_bottom(), uv: egui::Pos2::ZERO, color: col_bot });
-                    mesh.vertices.push(Vertex { pos: top_bar_rect.left_bottom(), uv: egui::Pos2::ZERO, color: col_bot });
-                    mesh.add_triangle(idx, idx + 1, idx + 2);
-                    mesh.add_triangle(idx, idx + 2, idx + 3);
-
-                    ui.painter().add(mesh);
-
-                    // We do NOT set global visuals here as it affects other windows (like modals)
-                    // The widgets below manually handle opacity via Color32 usage.
-
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_bar_rect.shrink(10.0)), |ui| {
-                         ui.horizontal_centered(|ui| {
-                             
-                             // Left: Filename
-                             if let Some(path) = &self.current_path {
-                                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                                 ui.label(egui::RichText::new(name).size(16.0).strong().color(egui::Color32::WHITE.linear_multiply(self.top_bar_opacity)));
-                                 
-                                 // "Edited" status
-                                 if self.is_image_edited { 
-                                     ui.label(egui::RichText::new("Edited").italics().color(egui::Color32::LIGHT_GRAY.linear_multiply(self.top_bar_opacity))); 
-                                 }
-                             }
-
-                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                 // Right: Buttons
-                                 let btn_size = egui::vec2(24.0, 24.0);
-                                 let base_color = egui::Color32::WHITE.linear_multiply(self.top_bar_opacity);
-                                 
-                                 // Drawing Toggle
-                                 let tooltip = if self.is_drawing_mode { "Stop Drawing" } else { "Toggle Drawing" };
-                                 let icon = if self.is_drawing_mode {
-                                     egui::include_image!("../materials/pencil-filled.svg")
-                                 } else {
-                                     egui::include_image!("../materials/pencil-unfilled.svg")
-                                 };
-                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
-                                 let response = ui.add(btn).on_hover_text(tooltip);
-                                 
-                                 if response.clicked() {
-                                     self.is_drawing_mode = !self.is_drawing_mode;
-                                 }
-                                 
-                                 ui.separator();
-
-                                 // Convert Button
-                                 let icon = egui::include_image!("../materials/convert.svg");
-                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
-                                 let response = ui.add(btn).on_hover_text("Convert Image");
-                                 
-                                 if response.clicked() {
-                                     ui.ctx().memory_mut(|m| m.open_popup(egui::Id::new("convert_popup")));
-                                 }
-                                 
-                                 egui::popup::popup_below_widget(ui, egui::Id::new("convert_popup"), &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
-                                      ui.set_min_width(100.0);
-                                      if ui.button("to JPG").clicked() { 
-                                          self.convert_image(image::ImageFormat::Jpeg);
-                                          ui.close_menu();
-                                      }
-                                      if ui.button("to PNG").clicked() { 
-                                          ui.close_menu();
-                                          self.convert_image(image::ImageFormat::Png);
-                                      }
-                                 });
-
-                                 // Rotate Button
-                                 let icon = egui::include_image!("../materials/rotate.png");
-                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
-                                 let response = ui.add(btn).on_hover_text("Rotate 90°");
-                                 if response.clicked() {
-                                     self.rotate_image(ctx);
-                                 }
-
-                                 // Info Button
-                                 let icon = egui::include_image!("../materials/info.svg");
-                                 let btn = egui::Button::image(egui::Image::new(icon).tint(base_color)).frame(false).min_size(btn_size);
-                                 let response = ui.add(btn).on_hover_text("Image Info");
-                                 
-                                 if response.clicked() {
-                                     self.show_info_panel = !self.show_info_panel;
-                                 }
-
-                             });
-                         });
+                    // UI content
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_rect.shrink(10.0)), |ui| {
+                        ui.horizontal_centered(|ui| {
+                            if let Some(path) = &self.current_path {
+                                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                                let col = egui::Color32::WHITE.linear_multiply(self.top_bar_opacity);
+                                ui.label(egui::RichText::new(name).size(16.0).strong().color(col));
+                                if self.is_image_edited {
+                                    ui.label(egui::RichText::new("Edited").italics().color(egui::Color32::LIGHT_GRAY.linear_multiply(self.top_bar_opacity)));
+                                }
+                            }
+                            
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let btn_size = egui::vec2(24.0, 24.0);
+                                let tint = egui::Color32::WHITE.linear_multiply(self.top_bar_opacity);
+                                
+                                // Drawing Toggle
+                                let icon = if self.is_drawing_mode {
+                                    egui::include_image!("../materials/pencil-filled.svg")
+                                } else {
+                                    egui::include_image!("../materials/pencil-unfilled.svg")
+                                };
+                                if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
+                                    .on_hover_text(if self.is_drawing_mode { "Stop Drawing" } else { "Toggle Drawing" })
+                                    .clicked() { self.is_drawing_mode = !self.is_drawing_mode; }
+                                
+                                ui.separator();
+                                
+                                // Convert
+                                let icon = egui::include_image!("../materials/convert2.svg");
+                                let resp = ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
+                                    .on_hover_text("Convert Image");
+                                if resp.clicked() { ui.ctx().memory_mut(|m| m.open_popup(egui::Id::new("convert_popup"))); }
+                                egui::popup::popup_below_widget(ui, egui::Id::new("convert_popup"), &resp, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                                    ui.set_min_width(100.0);
+                                    if ui.button("to JPG").clicked() { self.convert_image(image::ImageFormat::Jpeg); ui.close_menu(); }
+                                    if ui.button("to PNG").clicked() { self.convert_image(image::ImageFormat::Png); ui.close_menu(); }
+                                });
+                                
+                                // Rotate
+                                let icon = egui::include_image!("../materials/rotate2.png");
+                                if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
+                                    .on_hover_text("Rotate 90°").clicked() { self.rotate_image(ctx); }
+                                
+                                // Info
+                                let icon = egui::include_image!("../materials/info.svg");
+                                if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
+                                    .on_hover_text("Image Info").clicked() { self.show_info_panel = !self.show_info_panel; }
+                            });
+                        });
                     });
                     
-                    // Drawing Tools Section (Below top bar)
-                    // Drawing Tools Section (Below top bar)
+                    // Drawing tools
                     if self.is_drawing_mode {
-                         let tools_rect = egui::Rect::from_min_size(egui::pos2(0.0, 60.0), egui::vec2(screen_rect.width(), 50.0));
-                         ui.painter().rect_filled(tools_rect, 0.0, top_bar_bg_color);
-                         
-                         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tools_rect.shrink(5.0)), |ui| {
-                             egui::ScrollArea::horizontal().show(ui, |ui| {
-                                 ui.horizontal_centered(|ui| {
-                                 // Tool Selection
-                                 ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Pencil, "✏ Pencil");
-                                 ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Shape, "⬜ Shape");
-                                 ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Text, "T Text");
-                                 
-                                 ui.separator();
-                                 
-                                 match self.drawing_settings.tool {
-                                     DrawingTool::Pencil => {
-                                         // Colors
-                                         let colors = [
-                                             egui::Color32::RED, egui::Color32::GREEN, egui::Color32::BLUE,
-                                             egui::Color32::YELLOW, egui::Color32::BLACK, egui::Color32::WHITE
-                                         ];
-                                         for &color in &colors {
-                                             let mut button = egui::Button::new("   ").fill(color);
-                                             if self.drawing_settings.color == color {
-                                                 button = button.stroke(egui::Stroke::new(2.0, egui::Color32::WHITE));
-                                             }
-                                             if ui.add(button).clicked() {
-                                                 self.drawing_settings.color = color;
-                                             }
-                                         }
-                                         
-                                         ui.separator();
-                                         ui.add(egui::Slider::new(&mut self.drawing_settings.size, 1.0..=50.0).text("Size"));
-                                     }
-                                     DrawingTool::Shape => {
-                                         // Shape Selector
-                                          ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Rectangle, "Rect");
-                                          ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Circle, "Circle");
-                                          ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Line, "Line");
-                                          
-                                          ui.separator();
-                                          
-                                          // Shape Color
-                                          let colors = [
-                                             egui::Color32::RED, egui::Color32::GREEN, egui::Color32::BLUE,
-                                             egui::Color32::YELLOW, egui::Color32::BLACK, egui::Color32::WHITE
-                                         ];
-                                          for &color in &colors {
-                                             let mut button = egui::Button::new("   ").fill(color);
-                                             if self.drawing_settings.color == color {
-                                                 button = button.stroke(egui::Stroke::new(2.0, egui::Color32::WHITE));
-                                             }
-                                             if ui.add(button).clicked() {
-                                                 self.drawing_settings.color = color;
-                                             }
-                                         }
-                                         
-                                         ui.separator();
-                                         ui.add(egui::Slider::new(&mut self.drawing_settings.size, 1.0..=20.0).text("Thickness"));
-                                     }
-                                     DrawingTool::Text => {
-                                         // Font Settings
-                                         let colors = [
-                                             egui::Color32::RED, egui::Color32::GREEN, egui::Color32::BLUE, 
-                                             egui::Color32::BLACK, egui::Color32::WHITE
-                                         ];
-                                         for &color in &colors {
-                                             let mut button = egui::Button::new("   ").fill(color);
-                                              if self.drawing_settings.color == color {
-                                                 button = button.stroke(egui::Stroke::new(2.0, egui::Color32::WHITE));
-                                             }
-                                             if ui.add(button).clicked() {
-                                                 self.drawing_settings.color = color;
-                                             }
-                                         }
-                                         
-                                         ui.separator();
-                                         ui.add(egui::Slider::new(&mut self.drawing_settings.font_size, 10.0..=100.0).text("Size"));
-                                         
-                                         ui.separator();
-                                         ui.horizontal(|ui| {
+                        let tools_rect = egui::Rect::from_min_size(egui::pos2(0.0, 60.0), egui::vec2(screen_rect.width(), 50.0));
+                        ui.painter().rect_filled(tools_rect, 0.0, egui::Color32::from_black_alpha((180.0 * self.top_bar_opacity) as u8));
+                        
+                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tools_rect.shrink(5.0)), |ui| {
+                            egui::ScrollArea::horizontal().show(ui, |ui| {
+                                ui.horizontal_centered(|ui| {
+                                    ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Pencil, "✏ Pencil");
+                                    ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Shape, "⬜ Shape");
+                                    ui.selectable_value(&mut self.drawing_settings.tool, DrawingTool::Text, "T Text");
+                                    ui.separator();
+                                    
+                                    let colors = [egui::Color32::RED, egui::Color32::GREEN, egui::Color32::BLUE,
+                                                  egui::Color32::YELLOW, egui::Color32::BLACK, egui::Color32::WHITE];
+                                    for &c in &colors {
+                                        let mut b = egui::Button::new("   ").fill(c);
+                                        if self.drawing_settings.color == c { b = b.stroke(egui::Stroke::new(2.0, egui::Color32::WHITE)); }
+                                        if ui.add(b).clicked() { self.drawing_settings.color = c; }
+                                    }
+                                    
+                                    ui.separator();
+                                    match self.drawing_settings.tool {
+                                        DrawingTool::Pencil => { ui.add(egui::Slider::new(&mut self.drawing_settings.size, 1.0..=50.0).text("Size")); }
+                                        DrawingTool::Shape => {
+                                            ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Rectangle, "Rect");
+                                            ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Circle, "Circle");
+                                            ui.selectable_value(&mut self.drawing_settings.shape, ShapeType::Line, "Line");
+                                            ui.add(egui::Slider::new(&mut self.drawing_settings.size, 1.0..=20.0).text("Thickness"));
+                                        }
+                                        DrawingTool::Text => {
+                                            ui.add(egui::Slider::new(&mut self.drawing_settings.font_size, 10.0..=100.0).text("Size"));
                                             ui.selectable_value(&mut self.drawing_settings.font_family, FontFamily::Proportional, "Sans");
                                             ui.selectable_value(&mut self.drawing_settings.font_family, FontFamily::Monospace, "Mono");
-                                         });
-                                         ui.checkbox(&mut self.drawing_settings.font_bold, "Bold");
-                                      }
-                                 }
-                             });
-                              }); // ScrollArea
-                         });
+                                            ui.checkbox(&mut self.drawing_settings.font_bold, "Bold");
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                    }
+                });
+        }
+        
+        // --- Render Navigation Arrows ---
+        // Arrows: vertical gradient blur strips on left/right edges
+        let arrow_strip_width = 50.0;
+        let arrow_strip_height = 100.0;
+        let arrow_y = (screen_rect.height() - arrow_strip_height) / 2.0;
+        
+        // Left Arrow
+        if self.left_arrow_opacity > 0.0 {
+            let left_rect = egui::Rect::from_min_size(egui::pos2(0.0, arrow_y), egui::vec2(arrow_strip_width, arrow_strip_height));
+            
+            egui::Area::new(egui::Id::new("left_arrow"))
+                .fixed_pos(left_rect.min)
+                .order(egui::Order::Foreground)
+                .interactable(true)
+                .show(ctx, |ui| {
+                    // Paint blur gradient (fades right)
+                    if let (Some(blur_tex), Some(img_rect)) = (&self.blurred_texture, image_rect) {
+                        paint_blur_gradient(ui.painter(), left_rect, self.left_arrow_opacity, blur_tex, img_rect, "right");
+                    }
+                    
+                    // Chevron
+                    let center = left_rect.center();
+                    let s = 16.0;
+                    let col = egui::Color32::WHITE.linear_multiply(self.left_arrow_opacity);
+                    ui.painter().add(egui::Shape::line(vec![
+                        egui::pos2(center.x + s * 0.3, center.y - s * 0.5),
+                        egui::pos2(center.x - s * 0.3, center.y),
+                        egui::pos2(center.x + s * 0.3, center.y + s * 0.5),
+                    ], egui::Stroke::new(2.5, col)));
+                    
+                    if ui.allocate_rect(left_rect, egui::Sense::click()).clicked() {
+                        self.prev_image(ctx);
+                    }
+                });
+        }
+        
+        // Right Arrow
+        if self.right_arrow_opacity > 0.0 {
+            let right_rect = egui::Rect::from_min_size(
+                egui::pos2(screen_rect.width() - arrow_strip_width, arrow_y),
+                egui::vec2(arrow_strip_width, arrow_strip_height)
+            );
+            
+            egui::Area::new(egui::Id::new("right_arrow"))
+                .fixed_pos(right_rect.min)
+                .order(egui::Order::Foreground)
+                .interactable(true)
+                .show(ctx, |ui| {
+                    // Paint blur gradient (fades left)
+                    if let (Some(blur_tex), Some(img_rect)) = (&self.blurred_texture, image_rect) {
+                        paint_blur_gradient(ui.painter(), right_rect, self.right_arrow_opacity, blur_tex, img_rect, "left");
+                    }
+                    
+                    // Chevron
+                    let center = right_rect.center();
+                    let s = 16.0;
+                    let col = egui::Color32::WHITE.linear_multiply(self.right_arrow_opacity);
+                    ui.painter().add(egui::Shape::line(vec![
+                        egui::pos2(center.x - s * 0.3, center.y - s * 0.5),
+                        egui::pos2(center.x + s * 0.3, center.y),
+                        egui::pos2(center.x - s * 0.3, center.y + s * 0.5),
+                    ], egui::Stroke::new(2.5, col)));
+                    
+                    if ui.allocate_rect(right_rect, egui::Sense::click()).clicked() {
+                        self.next_image(ctx);
                     }
                 });
         }

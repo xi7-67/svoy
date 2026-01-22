@@ -135,6 +135,7 @@ struct ImageViewer {
     zoom: f32,
     target_zoom: f32,
     offset: egui::Vec2,
+    target_offset: egui::Vec2,
     last_frame_time: Instant,
     
     // UI State
@@ -182,6 +183,7 @@ impl ImageViewer {
             zoom: 1.0,
             target_zoom: 1.0,
             offset: egui::Vec2::ZERO,
+            target_offset: egui::Vec2::ZERO,
             last_frame_time: Instant::now(),
             
             top_bar_opacity: 0.0,
@@ -215,6 +217,7 @@ impl ImageViewer {
         self.zoom = 1.0;
         self.target_zoom = 1.0;
         self.offset = egui::Vec2::ZERO;
+        self.target_offset = egui::Vec2::ZERO;
         self.is_image_edited = false;
         self.drawings.clear();
         self.current_stroke = None;
@@ -408,39 +411,60 @@ impl eframe::App for ImageViewer {
         let dt = now.duration_since(self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
 
-        // Smooth zoom interpolation (120+ FPS capable)
+        // Smooth zoom and offset interpolation (120+ FPS capable)
         let zoom_speed = 15.0; // Higher = faster response
+        let dt_min = (zoom_speed * dt).min(1.0);
+        
+        // Zoom
         let zoom_diff = self.target_zoom - self.zoom;
         if zoom_diff.abs() > 0.001 {
-            self.zoom += zoom_diff * (zoom_speed * dt).min(1.0);
-            ctx.request_repaint(); // Keep animating
+            self.zoom += zoom_diff * dt_min;
+            ctx.request_repaint();
         } else {
             self.zoom = self.target_zoom;
+        }
+        
+        // Offset
+        let offset_diff = self.target_offset - self.offset;
+        if offset_diff.length_sq() > 0.001 {
+            self.offset += offset_diff * dt_min;
+            ctx.request_repaint();
+        } else {
+            self.offset = self.target_offset;
         }
 
         // Handle pending window resize (multi-frame for Wayland compatibility)
         if let Some(new_size) = self.pending_resize {
+            self.pending_resize_frame += 1;
             match self.pending_resize_frame {
-                0 => {
-                    // Frame 0: Enable resizing
+                1 => {
+                    // Frame 1: Enable resizing
                     ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
-                    self.pending_resize_frame = 1;
                     ctx.request_repaint();
                 }
-                1 => {
-                    // Frame 1: Set the new size
+                5 => {
+                    // Frame 5: Set the new size (give WM time to process resizable state)
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
-                    self.pending_resize_frame = 2;
+                    ctx.request_repaint();
+                }
+                10 => {
+                    // Frame 10: Disable resizing and clear pending
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                    self.pending_resize = None;
+                    self.pending_resize_frame = 0;
                     ctx.request_repaint();
                 }
                 _ => {
-                    // Frame 2+: Disable resizing and clear pending
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
-                    self.pending_resize = None;
-                    ctx.request_repaint();
+                    // Wait frames
+                    if self.pending_resize_frame < 12 {
+                         ctx.request_repaint();
+                    }
                 }
             }
         }
+
+
+
 
         // Keyboard navigation
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
@@ -534,7 +558,7 @@ impl eframe::App for ImageViewer {
         let top_area = if self.is_drawing_mode { 110.0 } else { top_bar_height };
         
         let hovering_top = mouse_pos.map_or(false, |p| p.y <= top_area && screen_rect.contains(p));
-        let should_show_top = hovering_top || self.is_drawing_mode || self.top_bar_opacity > 0.1;
+
         
         if hovering_top || self.is_drawing_mode {
             self.top_bar_opacity = (self.top_bar_opacity + anim_speed).min(1.0);
@@ -556,19 +580,16 @@ impl eframe::App for ImageViewer {
         if hovering_left {
             self.left_arrow_opacity = (self.left_arrow_opacity + anim_speed).min(1.0);
         } else {
-            self.left_arrow_opacity = (self.left_arrow_opacity - anim_speed * 0.5).max(0.0);
+            self.left_arrow_opacity = (self.left_arrow_opacity - anim_speed).max(0.0);
         }
+        if self.left_arrow_opacity > 0.0 && self.left_arrow_opacity < 1.0 { ctx.request_repaint(); }
         
         if hovering_right {
             self.right_arrow_opacity = (self.right_arrow_opacity + anim_speed).min(1.0);
         } else {
-            self.right_arrow_opacity = (self.right_arrow_opacity - anim_speed * 0.5).max(0.0);
+            self.right_arrow_opacity = (self.right_arrow_opacity - anim_speed).max(0.0);
         }
-        
-        if (self.left_arrow_opacity > 0.0 && self.left_arrow_opacity < 1.0) ||
-           (self.right_arrow_opacity > 0.0 && self.right_arrow_opacity < 1.0) {
-            ctx.request_repaint();
-        }
+        if self.right_arrow_opacity > 0.0 && self.right_arrow_opacity < 1.0 { ctx.request_repaint(); }
         
         // Helper: paint gradient blur overlay
         use egui::epaint::{Vertex, Mesh};
@@ -736,9 +757,7 @@ impl eframe::App for ImageViewer {
                 .interactable(true)
                 .show(ctx, |ui| {
                     // Paint blur gradient (fades right)
-                    if let (Some(blur_tex), Some(img_rect)) = (&self.blurred_texture, image_rect) {
-                        paint_blur_gradient(ui.painter(), left_rect, self.left_arrow_opacity, blur_tex, img_rect, "right");
-                    }
+
                     
                     // Chevron
                     let center = left_rect.center();
@@ -769,9 +788,7 @@ impl eframe::App for ImageViewer {
                 .interactable(true)
                 .show(ctx, |ui| {
                     // Paint blur gradient (fades left)
-                    if let (Some(blur_tex), Some(img_rect)) = (&self.blurred_texture, image_rect) {
-                        paint_blur_gradient(ui.painter(), right_rect, self.right_arrow_opacity, blur_tex, img_rect, "left");
-                    }
+
                     
                     // Chevron
                     let center = right_rect.center();
@@ -826,15 +843,14 @@ impl eframe::App for ImageViewer {
                     
                     // Adjust offset to zoom towards mouse cursor
                     if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                        // Current image center in screen coords
-                        let screen_center = rect.center().to_vec2() + self.offset;
-                        // Vector from image center to mouse
+                        // Current target center in screen coords
+                        let screen_center = rect.center().to_vec2() + self.target_offset;
+                        // Vector from center to mouse
                         let mouse_offset = mouse_pos.to_vec2() - screen_center;
-                        // Scale this vector by the zoom ratio to keep mouse point fixed
+                        // Scale this vector by the zoom ratio
                         let zoom_ratio = self.target_zoom / old_zoom;
-                        // New offset adjustment: the point under mouse should stay under mouse
-                        // offset_new = offset_old - mouse_offset * (zoom_ratio - 1)
-                        self.offset -= mouse_offset * (zoom_ratio - 1.0);
+                        // Adjust target offset
+                        self.target_offset -= mouse_offset * (zoom_ratio - 1.0);
                     }
                     
                     ctx.request_repaint();
@@ -842,12 +858,14 @@ impl eframe::App for ImageViewer {
 
                 // Drag/Pan
                 if response.dragged() {
+                     // Update both for immediate response + keeping target in sync
+                     self.target_offset += response.drag_delta();
                      self.offset += response.drag_delta();
                 }
 
                 // Center logic
                 let mut screen_center = rect.center().to_vec2();
-                // Apply offset
+                // Apply visual offset (interpolated)
                 screen_center += self.offset;
 
                 let image_rect = egui::Rect::from_center_size(screen_center.to_pos2(), display_size);

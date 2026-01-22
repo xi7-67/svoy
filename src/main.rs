@@ -7,6 +7,16 @@ use walkdir::WalkDir;
 // Supported image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
 
+// Clamp window size to fit comfortably on screen (prevents Hyprland from tiling)
+// Uses 80% of a 2560x1440 screen as max: 2048x1152
+const MAX_WINDOW_WIDTH: f32 = 2048.0;
+const MAX_WINDOW_HEIGHT: f32 = 1152.0;
+
+fn clamp_to_screen(width: f32, height: f32) -> [f32; 2] {
+    let scale = (MAX_WINDOW_WIDTH / width).min(MAX_WINDOW_HEIGHT / height).min(1.0);
+    [width * scale, height * scale]
+}
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = env::args().collect();
     let initial_path = args.get(1).map(PathBuf::from);
@@ -14,12 +24,11 @@ fn main() -> eframe::Result<()> {
     // Default size if image load fails or no image
     let mut initial_size = [800.0, 600.0];
 
-    // Try to peek at the image size to set window size (opens at exact image resolution)
+    // Try to peek at the image size, clamped to screen-safe dimensions
     if let Some(path) = &initial_path {
         if let Ok(reader) = image::ImageReader::open(path) {
              if let Ok(dims) = reader.into_dimensions() {
-                // Use actual image dimensions - this may trigger floating in tiling WMs
-                initial_size = [dims.0 as f32, dims.1 as f32];
+                initial_size = clamp_to_screen(dims.0 as f32, dims.1 as f32);
              }
         }
     }
@@ -150,6 +159,10 @@ struct ImageViewer {
     // Navigation Arrow State
     left_arrow_opacity: f32,
     right_arrow_opacity: f32,
+    
+    // Pending window resize (for Wayland compatibility)
+    pending_resize: Option<egui::Vec2>,
+    pending_resize_frame: u8,
 }
 
 impl ImageViewer {
@@ -186,6 +199,8 @@ impl ImageViewer {
             show_info_panel: false,
             left_arrow_opacity: 0.0,
             right_arrow_opacity: 0.0,
+            pending_resize: None,
+            pending_resize_frame: 0,
         };
 
         if let Some(path) = initial_path {
@@ -253,6 +268,13 @@ impl ImageViewer {
     fn load_texture(&mut self, ctx: &egui::Context, path: &Path) {
         match image::open(path) {
             Ok(img) => {
+                // Schedule window resize for next frame, clamped to screen-safe size
+                let clamped = clamp_to_screen(img.width() as f32, img.height() as f32);
+                let new_size = egui::vec2(clamped[0], clamped[1]);
+                self.pending_resize = Some(new_size);
+                self.pending_resize_frame = 0;
+                ctx.request_repaint();
+                
                 self.current_image = Some(img.clone());
                 self.metadata = Some(self.extract_metadata(path, &img));
                 self.update_texture_from_image(ctx);
@@ -394,6 +416,30 @@ impl eframe::App for ImageViewer {
             ctx.request_repaint(); // Keep animating
         } else {
             self.zoom = self.target_zoom;
+        }
+
+        // Handle pending window resize (multi-frame for Wayland compatibility)
+        if let Some(new_size) = self.pending_resize {
+            match self.pending_resize_frame {
+                0 => {
+                    // Frame 0: Enable resizing
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
+                    self.pending_resize_frame = 1;
+                    ctx.request_repaint();
+                }
+                1 => {
+                    // Frame 1: Set the new size
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
+                    self.pending_resize_frame = 2;
+                    ctx.request_repaint();
+                }
+                _ => {
+                    // Frame 2+: Disable resizing and clear pending
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                    self.pending_resize = None;
+                    ctx.request_repaint();
+                }
+            }
         }
 
         // Keyboard navigation
@@ -764,10 +810,12 @@ impl eframe::App for ImageViewer {
                 let sense = if self.is_drawing_mode { egui::Sense::click() } else { egui::Sense::drag() };
                 let (rect, response) = ui.allocate_exact_size(available_size, sense);
 
-                // Zoom with scroll (smooth animated)
+                // Zoom with scroll (smooth animated, centered on mouse)
                 let scroll_delta = ctx.input(|i| i.raw_scroll_delta.y);
                 if scroll_delta != 0.0 {
                     let zoom_factor = 1.15;
+                    let old_zoom = self.target_zoom;
+                    
                     if scroll_delta > 0.0 {
                         self.target_zoom *= zoom_factor;
                     } else {
@@ -775,6 +823,20 @@ impl eframe::App for ImageViewer {
                     }
                     // Allow zooming out to 5% and in to 5000%
                     self.target_zoom = self.target_zoom.clamp(0.05, 50.0);
+                    
+                    // Adjust offset to zoom towards mouse cursor
+                    if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                        // Current image center in screen coords
+                        let screen_center = rect.center().to_vec2() + self.offset;
+                        // Vector from image center to mouse
+                        let mouse_offset = mouse_pos.to_vec2() - screen_center;
+                        // Scale this vector by the zoom ratio to keep mouse point fixed
+                        let zoom_ratio = self.target_zoom / old_zoom;
+                        // New offset adjustment: the point under mouse should stay under mouse
+                        // offset_new = offset_old - mouse_offset * (zoom_ratio - 1)
+                        self.offset -= mouse_offset * (zoom_ratio - 1.0);
+                    }
+                    
                     ctx.request_repaint();
                 }
 

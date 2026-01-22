@@ -84,6 +84,8 @@ struct DrawingObject {
     // Text: points[0] = position
     shape_type: Option<ShapeType>,
     text: Option<String>,
+    font_family: Option<FontFamily>,
+    font_bold: bool,
 }
 
 struct DrawingSettings {
@@ -371,12 +373,145 @@ impl ImageViewer {
     fn save_current_image(&mut self) -> Result<(), String> {
         if let Some(path) = &self.current_path {
             if let Some(img) = &self.current_image {
-                // If we have drawings, we should probably burn them in or warn?
-                // For now, just save the base image as requested in previous steps, 
-                // but strictly speaking "Save" should probably save the edits.
-                // Given the task is just "controls work", let's make sure Convert works first.
-                img.save(path).map_err(|e| e.to_string())?;
+                // Burn drawings into the image
+                let mut rgba = img.to_rgba8();
+                
+                // Helper to map color
+                let to_rgba = |c: egui::Color32| image::Rgba([c.r(), c.g(), c.b(), c.a()]);
+
+                // We need a font for text. Try loading a system font.
+                let font_data = std::fs::read("/usr/share/fonts/liberation/LiberationSans-Regular.ttf")
+                    .or_else(|_| std::fs::read("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"))
+                    .or_else(|_| std::fs::read("/usr/share/fonts/dejavu/DejaVuSans.ttf"))
+                    .or_else(|_| std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
+                    .ok();
+                    
+                let font = font_data.as_ref().and_then(|data| ab_glyph::FontRef::try_from_slice(data).ok());
+
+                for drawing in &self.drawings {
+                    let col = to_rgba(drawing.color);
+                    match drawing.tool {
+                        DrawingTool::Pencil => {
+                            for i in 0..drawing.points.len().saturating_sub(1) {
+                                let start = drawing.points[i];
+                                let end = drawing.points[i+1];
+                                imageproc::drawing::draw_line_segment_mut(
+                                    &mut rgba,
+                                    (start.x, start.y),
+                                    (end.x, end.y),
+                                    col
+                                );
+                                // Thick lines hack
+                                if drawing.size > 1.0 {
+                                     for o in 1..=(drawing.size as i32 / 2) {
+                                         let off = o as f32;
+                                         imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x+off, start.y), (end.x+off, end.y), col);
+                                         imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x-off, start.y), (end.x-off, end.y), col);
+                                         imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x, start.y+off), (end.x, end.y+off), col);
+                                         imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x, start.y-off), (end.x, end.y-off), col);
+                                     }
+                                }
+                            }
+                        }
+                        DrawingTool::Shape => {
+                             if drawing.points.len() >= 2 {
+                                 let start = drawing.points[0];
+                                 let end = drawing.points[1];
+                                 
+                                 if let Some(stype) = drawing.shape_type {
+                                     match stype {
+                                         ShapeType::Rectangle => {
+                                             let min_x = start.x.min(end.x) as i32;
+                                             let min_y = start.y.min(end.y) as i32;
+                                             let w = (start.x - end.x).abs() as u32;
+                                             let h = (start.y - end.y).abs() as u32;
+                                             let rect = imageproc::rect::Rect::at(min_x, min_y).of_size(w, h);
+                                             
+                                             for o in 0..(drawing.size as i32) {
+                                                  let r = imageproc::rect::Rect::at(min_x - o, min_y - o).of_size(w + (o*2) as u32, h + (o*2) as u32);
+                                                  imageproc::drawing::draw_hollow_rect_mut(&mut rgba, r, col);
+                                             }
+                                         },
+                                         ShapeType::Circle => {
+                                             let center = ((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+                                             let radius = (start.distance(end) / 2.0) as i32;
+                                             for o in 0..(drawing.size as i32) {
+                                                 imageproc::drawing::draw_hollow_circle_mut(&mut rgba, (center.0 as i32, center.1 as i32), radius + o, col);
+                                             }
+                                         },
+                                         ShapeType::Line => {
+                                              imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x, start.y), (end.x, end.y), col);
+                                              for o in 1..=(drawing.size as i32 / 2) {
+                                                 let off = o as f32;
+                                                 imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x+off, start.y), (end.x+off, end.y), col);
+                                                 imageproc::drawing::draw_line_segment_mut(&mut rgba, (start.x, start.y+off), (end.x, end.y+off), col);
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                        }
+                        DrawingTool::Text => {
+                             if let Some(text) = &drawing.text {
+                                 if let Some(pos) = drawing.points.first() {
+                                     if let Some(font) = &font {
+                                         let scale = ab_glyph::PxScale::from(drawing.size);
+                                         imageproc::drawing::draw_text_mut(
+                                             &mut rgba,
+                                             col,
+                                             pos.x as i32,
+                                             pos.y as i32,
+                                             scale,
+                                             font,
+                                             text
+                                         );
+                                         
+                                         if drawing.font_bold {
+                                              let offsets = [(1,0), (-1,0), (0,1), (0,-1)];
+                                              for (ox, oy) in offsets {
+                                                  imageproc::drawing::draw_text_mut(
+                                                     &mut rgba,
+                                                     col,
+                                                     pos.x as i32 + ox,
+                                                     pos.y as i32 + oy,
+                                                     scale,
+                                                     font,
+                                                     text
+                                                 );
+                                              }
+                                              let offsets2 = [(1,1), (-1,-1), (1,-1), (-1,1)];
+                                              for (ox, oy) in offsets2 {
+                                                  imageproc::drawing::draw_text_mut(
+                                                     &mut rgba,
+                                                     col,
+                                                     pos.x as i32 + ox,
+                                                     pos.y as i32 + oy,
+                                                     scale,
+                                                     font,
+                                                     text
+                                                 );
+                                              }
+                                         }
+                                     }
+                                 }
+                             }
+                        }
+                    }
+                }
+
+                // Save flattened image
+                rgba.save(path).map_err(|e| e.to_string())?;
                 self.is_image_edited = false;
+                
+                // Clear drawings locally as they are now part of the image
+                self.drawings.clear();
+                
+                // We cannot easily reload the texture here without &egui::Context, 
+                // but since we modified the file on disk, the next load will pick it up.
+                // For immediate feedback, we can try to update the current_image in memory
+                // with the burned version so the next frame rendering uses it (if we rebuild texture).
+                self.current_image = Some(image::DynamicImage::ImageRgba8(rgba));
+                
                 return Ok(());
             }
         }
@@ -406,6 +541,12 @@ impl ImageViewer {
 
 impl eframe::App for ImageViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- Global Style Configuration (Glassy Popups) ---
+        let mut style = (*ctx.style()).clone();
+        style.visuals.window_fill = egui::Color32::from_black_alpha(180);
+        // Apply to non-interactive widgets too if they are used as backgrounds
+        ctx.set_style(style);
+
         // Calculate delta time for smooth animations
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame_time).as_secs_f32();
@@ -437,26 +578,22 @@ impl eframe::App for ImageViewer {
         if let Some(new_size) = self.pending_resize {
             self.pending_resize_frame += 1;
             match self.pending_resize_frame {
-                1 => {
-                    // Frame 1: Enable resizing
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
-                    ctx.request_repaint();
-                }
-                5 => {
-                    // Frame 5: Set the new size (give WM time to process resizable state)
+                1 | 5 | 10 => {
+                    // Frame 1, 5, 10: Spam the new size to ensure WM catches it
+                    // We DO NOT touch Resizable state, assuming the window is already floating
+                    // or that Hyprland will accept size hints better this way.
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
                     ctx.request_repaint();
                 }
-                10 => {
-                    // Frame 10: Disable resizing and clear pending
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                20 => {
+                    // Frame 20: Done
                     self.pending_resize = None;
                     self.pending_resize_frame = 0;
                     ctx.request_repaint();
                 }
                 _ => {
-                    // Wait frames
-                    if self.pending_resize_frame < 12 {
+                    // Keep animation loop alive during the sequence
+                    if self.pending_resize_frame < 21 {
                          ctx.request_repaint();
                     }
                 }
@@ -500,6 +637,8 @@ impl eframe::App for ImageViewer {
                     ui.horizontal(|ui| {
                         if ui.button("Save").clicked() {
                             if let Ok(_) = self.save_current_image() {
+                                // Re-upload texture to GPU to show burned changes
+                                self.update_texture_from_image(ctx);
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                         }
@@ -557,10 +696,11 @@ impl eframe::App for ImageViewer {
         let top_bar_height = 40.0;
         let top_area = if self.is_drawing_mode { 110.0 } else { top_bar_height };
         
+        let is_popup_open = ctx.memory(|m| m.is_popup_open(egui::Id::new("convert_popup")));
         let hovering_top = mouse_pos.map_or(false, |p| p.y <= top_area && screen_rect.contains(p));
 
         
-        if hovering_top || self.is_drawing_mode {
+        if hovering_top || self.is_drawing_mode || is_popup_open {
             self.top_bar_opacity = (self.top_bar_opacity + anim_speed).min(1.0);
         } else {
             self.top_bar_opacity = (self.top_bar_opacity - anim_speed * 0.5).max(0.0); // Slower fade out
@@ -906,6 +1046,8 @@ impl eframe::App for ImageViewer {
                                              size: self.drawing_settings.size,
                                              shape_type,
                                              text: None,
+                                             font_family: None,
+                                             font_bold: false,
                                          });
                                          self.is_image_edited = true;
                                      } else {
@@ -978,6 +1120,8 @@ impl eframe::App for ImageViewer {
                                        size: self.drawing_settings.font_size, // Use font size here
                                        shape_type: None,
                                        text: Some(self.text_entry_string.clone()),
+                                       font_family: Some(self.drawing_settings.font_family),
+                                       font_bold: self.drawing_settings.font_bold,
                                    });
                                }
                                // Close
@@ -1051,13 +1195,39 @@ impl eframe::App for ImageViewer {
                              if let Some(text) = &drawing.text {
                                  if let Some(pos) = drawing.points.first() {
                                      let screen_pos = to_screen(*pos);
-                                     painter.text(
-                                         screen_pos,
-                                         egui::Align2::LEFT_TOP,
-                                         text,
-                                         egui::FontId::proportional(drawing.size * self.zoom),
-                                         drawing.color
-                                     );
+                                     
+                                     let family = match drawing.font_family.unwrap_or(FontFamily::Proportional) {
+                                         FontFamily::Proportional => egui::FontFamily::Proportional,
+                                         FontFamily::Monospace => egui::FontFamily::Monospace,
+                                     };
+                                     
+                                     let font_id = egui::FontId::new(drawing.size * self.zoom, family);
+                                     
+                                     // Helper to paint text
+                                     let paint_text_at = |offset: egui::Vec2| {
+                                         painter.text(
+                                             screen_pos + offset,
+                                             egui::Align2::LEFT_TOP,
+                                             text,
+                                             font_id.clone(),
+                                             drawing.color
+                                         );
+                                     };
+                                     
+                                     if drawing.font_bold {
+                                         // Simulated bold: draw multiple times with slight offsets
+                                         paint_text_at(egui::vec2(-2.0, 0.0));
+                                         paint_text_at(egui::vec2(2.0, 0.0));
+                                         paint_text_at(egui::vec2(0.0, -2.0));
+                                         paint_text_at(egui::vec2(0.0, 2.0));
+                                         
+                                         // Add diagonals for "Level 2" thickness
+                                         paint_text_at(egui::vec2(-1.4, -1.4));
+                                         paint_text_at(egui::vec2(1.4, -1.4));
+                                         paint_text_at(egui::vec2(-1.4, 1.4));
+                                         paint_text_at(egui::vec2(1.4, 1.4));
+                                     }
+                                     paint_text_at(egui::vec2(0.0, 0.0));
                                  }
                              }
                         },

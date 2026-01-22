@@ -10,6 +10,8 @@ eframe = "0.30"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 egui_extras = { version = "0.30", features = ["image", "svg"] }
 walkdir = "2.5"
+imageproc = "0.25"
+ab_glyph = "0.2"
 
 [profile.release]
 opt-level = 3

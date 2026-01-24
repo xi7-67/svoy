@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use walkdir::WalkDir;
 
+mod share_logic;
+use share_logic::{ShareManager, ShareEvent};
+
 // Supported image extensions
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
 
@@ -166,6 +169,11 @@ struct ImageViewer {
     // Pending window resize (for Wayland compatibility)
     pending_resize: Option<egui::Vec2>,
     pending_resize_frame: u8,
+
+    // LocalSend Share State
+    share_manager: Option<ShareManager>,
+    show_share_modal: bool,
+    share_status: Option<String>,
 }
 
 impl ImageViewer {
@@ -205,6 +213,9 @@ impl ImageViewer {
             right_arrow_opacity: 0.0,
             pending_resize: None,
             pending_resize_frame: 0,
+            share_manager: None,
+            show_share_modal: false,
+            share_status: None,
         };
 
         if let Some(path) = initial_path {
@@ -675,6 +686,79 @@ impl eframe::App for ImageViewer {
             }
         }
 
+        // Share Modal
+        if self.show_share_modal {
+            // Poll events from share manager
+            if let Some(ref mgr) = self.share_manager {
+                for event in mgr.poll_events() {
+                    match event {
+                        ShareEvent::PeerDiscovered { fingerprint: _, device, addr: _ } => {
+                            // UI will just read from get_peers()
+                            self.share_status = Some(format!("Found: {}", device.alias));
+                        }
+                        ShareEvent::PeerLost { fingerprint: _ } => {}
+                        ShareEvent::TransferStarted { peer_fingerprint: _, file_path: _ } => {
+                            self.share_status = Some("Sending...".to_string());
+                        }
+                        ShareEvent::TransferComplete { peer_fingerprint } => {
+                            self.share_status = Some(format!("Sent to {}", peer_fingerprint));
+                        }
+                        ShareEvent::TransferFailed { peer_fingerprint: _, error } => {
+                            self.share_status = Some(format!("Failed: {}", error));
+                        }
+                        ShareEvent::Error(e) => {
+                            self.share_status = Some(format!("Error: {}", e));
+                        }
+                    }
+                }
+            }
+
+            let mut open = true;
+            egui::Window::new("Share via LocalSend")
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label("Select a device to send the current image:");
+                    ui.add_space(10.0);
+
+                    if let Some(ref mgr) = self.share_manager {
+                        let peers = mgr.get_peers();
+                        if peers.is_empty() {
+                            ui.spinner();
+                            ui.label("Scanning for devices...");
+                        } else {
+                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                for (fingerprint, (_addr, info)) in &peers {
+                                    let label = format!("{} ({:?})", info.alias, info.device_type);
+                                    if ui.button(&label).clicked() {
+                                        if let Some(ref path) = self.current_path {
+                                            if let Err(e) = mgr.send_file(fingerprint.clone(), path.clone()) {
+                                                self.share_status = Some(format!("Error: {}", e));
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        ui.label("Share service not available.");
+                    }
+
+                    ui.add_space(10.0);
+                    if let Some(status) = &self.share_status {
+                        ui.label(egui::RichText::new(status).italics().color(egui::Color32::LIGHT_GRAY));
+                    }
+                });
+            if !open {
+                self.show_share_modal = false;
+            }
+            
+            // Keep repainting while modal is open to update peer list
+            ctx.request_repaint();
+        }
+
         // --- Overlay UI Logic ---
         // Calculate all positions and hover states BEFORE rendering any Areas
         // This prevents egui Areas from "stealing" hover state and causing flicker
@@ -833,6 +917,20 @@ impl eframe::App for ImageViewer {
                                 let icon = egui::include_image!("../materials/info.svg");
                                 if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
                                     .on_hover_text("Image Info").clicked() { self.show_info_panel = !self.show_info_panel; }
+                                
+                                // Share via LocalSend
+                                let icon = egui::include_image!("../materials/share.png");
+                                if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
+                                    .on_hover_text("Share via LocalSend").clicked() {
+                                    // Initialize share manager if not already done
+                                    if self.share_manager.is_none() {
+                                        match ShareManager::new() {
+                                            Ok(mgr) => self.share_manager = Some(mgr),
+                                            Err(e) => self.share_status = Some(format!("Error: {}", e)),
+                                        }
+                                    }
+                                    self.show_share_modal = true;
+                                }
                             });
                         });
                     });

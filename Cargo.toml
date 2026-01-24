@@ -12,6 +12,9 @@ egui_extras = { version = "0.30", features = ["image", "svg"] }
 walkdir = "2.5"
 imageproc = "0.25"
 ab_glyph = "0.2"
+localsend = "0.2.2"
+tokio = { version = "1.49.0", features = ["full"] }
+reqwest = { version = "~0.12", features = ["native-tls", "blocking", "json", "multipart"] }
 
 [profile.release]
 opt-level = 3

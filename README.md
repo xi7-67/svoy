@@ -1,3 +1,8 @@
+#### Sakura
+
+![](preview/glimpse.gif)
+
+
 ## Todos
 - [x] Add localsend sending option
 - [x] make it downloadable via a package manager/sharing only the executable

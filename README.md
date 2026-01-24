@@ -1,6 +1,7 @@
 ## Todos
 - [x] Add localsend sending option
 - [x] make it downloadable via a package manager/sharing only the executable
+- [ ] make a great README.md file.
 
 ## Installation
 

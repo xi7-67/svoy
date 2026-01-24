@@ -1,1 +1,0 @@
-cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/home/xi/dev/svoy/target/release/build/mime_guess-f24de9a4b63f3481/out/mime_types_generated.rs

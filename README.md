@@ -1,10 +1,18 @@
 <div align="center">
   <h1>Sakura🌸</h1>
   <img src="resources/glimpse.gif" alt="Sakura Preview" width="457" height="459">
-  <p>A simple, modern, fast and chromeless image viewer with native support for tiling window managers. Built in Rust with eframe, egui, native to linux. The project is still under development and <b>HEAVILY</b> vibe-coded.</p>
+  <p>A simple, fast and chromeless image viewer with native support for tiling window managers. Its built in rust with egui and native to linux. The project is still under development and <b>HEAVILY</b> vibe-coded.</p>
 </div>
 
-## Todos
+## Features
+
+- file sharing with localsend-rs
+- image info
+- image rotation in 90°
+- converting image into png, jpg
+- image editing
+
+### Todos
 
 - [x] Add localsend sending option
 - [x] make it downloadable via a package manager/sharing only the executable
@@ -15,6 +23,8 @@
 ### Manual Installation (Any Linux)
 
 To install `sakura` and integrate it with your desktop environment:
+
+clone it, then
 
 ```bash
 ./install.sh
@@ -30,6 +40,6 @@ This will:
 
 You can simply share the binary found in `target/release/sakura` after building. It is self-contained (fonts are embedded).
 
-### Arch Linux (PKGBUILD)
+### Arch Linux
 
-A template `PKGBUILD` is provided in `packaging/PKGBUILD` for creating an Arch Linux package.
+Download it with your favourite aur helper.

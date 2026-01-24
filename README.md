@@ -1,7 +1,7 @@
-<br>
 # Sakura🌸
-<br>
 ![](resources/glimpse.gif)
+
+Sakura is a modern, fast and chromeless image viewer with native support for tiling window managers. Built in Rust with eframe, egui, native to linux. The project is still under development and <b>HEAVILY</b> vibe-coded.
 
 ## Todos
 - [x] Add localsend sending option

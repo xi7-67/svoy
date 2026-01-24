@@ -21,8 +21,6 @@
 
 ## Installation
 
-### Manual Installation (Any Linux)
-
 To install `sakura` and integrate it with your desktop environment:
 
 clone it, then

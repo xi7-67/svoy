@@ -33,11 +33,7 @@ This will:
 
 1. Build the release binary.
 2. Install `sakura` to `~/.local/bin/`.
-3. Install the desktop file to `~/.local/share/applications/`.
-
-### Portable usage
-
-You can simply share the binary found in `target/release/sakura` after building. It is self-contained (fonts are embedded).
+3. Install the desktop file to `~/.local/share/applications/`. (Its necessary for it to show up in your file browser)
 
 ### Arch Linux
 

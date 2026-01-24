@@ -1,6 +1,6 @@
 <div align="center">
-  <h1 align="center">Sakura🌸</h1>
-![](resources/glimpse.gif)
+  <h1>Sakura🌸</h1>
+  <img src="resources/glimpse.gif" alt="Sakura Preview" width="600">
   <p>A simple, modern, fast and chromeless image viewer with native support for tiling window managers. Built in Rust with eframe, egui, native to linux. The project is still under development and <b>HEAVILY</b> vibe-coded.</p>
 </div>
 

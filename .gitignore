@@ -1,0 +1,13 @@
+# Rust build artifacts
+/target
+
+# Executable (if manually moved to root)
+svoy
+
+# User specific files
+svoy.desktop
+
+# Editor configuration (optional but common)
+.vscode
+.idea
+*.swp

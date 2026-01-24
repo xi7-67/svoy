@@ -1,7 +1,6 @@
 # Sakura🌸
-<br>
+
 ![](resources/glimpse.gif)
-<br>
 
 ## Todos
 - [x] Add localsend sending option

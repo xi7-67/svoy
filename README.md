@@ -1,6 +1,6 @@
-#### Sakura
+# Sakura
 
-![](preview/glimpse.gif)
+![](resources/glimpse.gif)
 
 
 ## Todos

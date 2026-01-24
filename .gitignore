@@ -2,9 +2,11 @@
 /target
 
 # Executable (if manually moved to root)
+sakura
 svoy
 
 # User specific files
+sakura.desktop
 svoy.desktop
 
 # Editor configuration (optional but common)

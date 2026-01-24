@@ -38,17 +38,17 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("svoy")
+            .with_title("sakura")
             .with_inner_size(initial_size)
             .with_min_inner_size([200.0, 150.0])
-            .with_app_id("svoy")
+            .with_app_id("sakura")
             .with_decorations(true)
             .with_resizable(false), // Makes Hyprland float this window like sxiv/nsxiv
         ..Default::default()
     };
 
     eframe::run_native(
-        "svoy",
+        "sakura",
         options,
         Box::new(|cc| Ok(Box::new(ImageViewer::new(cc, initial_path)))),
     )
@@ -390,14 +390,9 @@ impl ImageViewer {
                 // Helper to map color
                 let to_rgba = |c: egui::Color32| image::Rgba([c.r(), c.g(), c.b(), c.a()]);
 
-                // We need a font for text. Try loading a system font.
-                let font_data = std::fs::read("/usr/share/fonts/liberation/LiberationSans-Regular.ttf")
-                    .or_else(|_| std::fs::read("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"))
-                    .or_else(|_| std::fs::read("/usr/share/fonts/dejavu/DejaVuSans.ttf"))
-                    .or_else(|_| std::fs::read("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
-                    .ok();
-                    
-                let font = font_data.as_ref().and_then(|data| ab_glyph::FontRef::try_from_slice(data).ok());
+                // Embed font for portability
+                let font_data = include_bytes!("../materials/font.ttf");
+                let font = ab_glyph::FontRef::try_from_slice(font_data).ok();
 
                 for drawing in &self.drawings {
                     let col = to_rgba(drawing.color);
@@ -909,7 +904,7 @@ impl eframe::App for ImageViewer {
                                 });
                                 
                                 // Rotate
-                                let icon = egui::include_image!("../materials/rotate2.png");
+                                let icon = egui::include_image!("../materials/rotate.png");
                                 if ui.add(egui::Button::image(egui::Image::new(icon).tint(tint)).frame(false).min_size(btn_size))
                                     .on_hover_text("Rotate 90°").clicked() { self.rotate_image(ctx); }
                                 

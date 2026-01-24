@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=svoy
-Comment=Fast and simple image viewer
-Exec=/home/xi/dev/svoy/target/release/svoy %f
-Icon=image-viewer
-Terminal=false
-Type=Application
-Categories=Graphics;Viewer;
-MimeType=image/png;image/jpeg;image/gif;image/webp;image/bmp;image/x-bmp;

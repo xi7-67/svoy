@@ -1,0 +1,28 @@
+# Maintainer: Your Name <your.email@example.com>
+pkgname=sakura
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A fast, simple image viewer written in Rust"
+arch=('x86_64')
+url="https://github.com/xi7-67/sakura"
+license=('MIT')
+depends=('gtk3' 'openssl') # Adjust dependencies as needed (e.g. gtk3 needed for rfd/egui integration if used? No, eframe uses winit/glutin usually but let's assume it needs system libs)
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/xi7-67/sakura/archive/refs/tags/v$pkgver.tar.gz") # Placeholder URL
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  cargo build --release --frozen --target "$CARCH-unknown-linux-gnu"
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/sakura "$pkgdir/usr/bin/sakura"
+  install -Dm644 packaging/sakura.desktop "$pkgdir/usr/share/applications/sakura.desktop"
+}

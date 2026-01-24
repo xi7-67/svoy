@@ -26,7 +26,7 @@ To install `sakura` and integrate it with your desktop environment:
 clone it, then
 
 ```bash
-git clone https://github.com/xi7-67/sakura.git; ./install.sh
+git clone https://github.com/xi7-67/sakura.git && ./install.sh
 ```
 
 This will:

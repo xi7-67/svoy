@@ -6,16 +6,17 @@
 
 ## Features
 
-- file sharing with localsend-rs
+- file sharing with <a href="https://github.com/wylited/localsend">localsend-rs</a>
 - image info
 - image rotation in 90°
 - converting image into png, jpg
 - image editing
+- it does not have bugs like every windows app recently.
 
 ### Todos
 
 - [x] Add localsend sending option
-- [x] make it downloadable via a package manager/sharing only the executable
+- [x] make it downloadable via a package manager/portable
 - [ ] make a great README.md file.
 
 ## Installation

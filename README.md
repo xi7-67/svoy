@@ -17,7 +17,7 @@
 
 - [x] Add localsend sending option
 - [x] make it downloadable via a package manager/portable
-- [ ] make a great README.md file.
+- [x] make a great README.md file.
 
 ## Installation
 
@@ -26,7 +26,7 @@ To install `sakura` and integrate it with your desktop environment:
 clone it, then
 
 ```bash
-git clone https://github.com/xi7-67/sakura.git && ./install.sh
+git clone https://github.com/xi7-67/sakura.git && cd sakura && ./install.sh
 ```
 
 This will:
